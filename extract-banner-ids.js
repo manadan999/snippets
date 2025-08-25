@@ -40,7 +40,7 @@ function findTsFiles(dir, fileList = []) {
 
 /**
  * Extracts stream/subscribe/setAlert patterns from file content
- * Pattern: this.translateService.stream($a,...).subscribe(...this.alertService.setAlert(..., ..., $b, ..., $c))
+ * Captures only the specific translateService.stream() subscription with nested setAlert
  * @param {string} content - File content to search
  * @returns {Array} Array of found pattern matches with $a, $b, $c
  */
@@ -52,44 +52,82 @@ function extractStreamPatterns(content) {
 
   const patterns = [];
 
-  // Split into multiple regex patterns to handle different code styles
-  const regexPatterns = [
-    // Pattern 1: Multi-line with braces
-    /(?:this\.)?translateService\s*\.stream\s*\(\s*['"`]([^'"`]+)['"`][^)]*\)[\s\S]*?\.subscribe\s*\(\s*[^{]*\{[\s\S]*?(?:this\.)?alertService\s*\.setAlert\s*\(\s*[^,]+\s*,\s*[^,]+\s*,\s*['"`]([^'"`]+)['"`]\s*,\s*[^,]+\s*,\s*([^,\);\s]+)/g,
+  // Find translateService.stream patterns with more precise boundaries
+  // This regex captures from .stream() to the end of the setAlert() call
+  const streamRegex = /(?:this\.)?translateService\s*\.stream\s*\(\s*['"`]([^'"`]+)['"`][^)]*\)\s*\.subscribe\s*\([^{]*(?:=>?\s*\{?|function[^{]*\{)[\s\S]*?(?:this\.)?alertService\s*\.setAlert\s*\([^;]*['"`]([^'"`]+)['"`][^;]*,\s*([^,\);\s]+)[^;]*;?\s*(?:\}|\)\s*;)/g;
 
-    // Pattern 2: Single line with arrow function
-    /(?:this\.)?translateService\s*\.stream\s*\(\s*['"`]([^'"`]+)['"`][^)]*\)[\s\S]*?\.subscribe\s*\(\s*[^=]*=>\s*[^{]*(?:this\.)?alertService\s*\.setAlert\s*\(\s*[^,]+\s*,\s*[^,]+\s*,\s*['"`]([^'"`]+)['"`]\s*,\s*[^,]+\s*,\s*([^,\);\s]+)/g,
+  let match;
 
-    // Pattern 3: Inline arrow function
-    /(?:this\.)?translateService\s*\.stream\s*\(\s*['"`]([^'"`]+)['"`][^)]*\)[\s\S]*?\.subscribe\s*\(\s*[^=]*=>\s*\{?[\s\S]*?(?:this\.)?alertService\s*\.setAlert\s*\(\s*[^,]+\s*,\s*[^,]+\s*,\s*['"`]([^'"`]+)['"`]\s*,\s*[^,]+\s*,\s*([^,\);\s]+)/g
-  ];
+  while ((match = streamRegex.exec(cleanContent)) !== null) {
+    const translationKey = match[1];
+    const alertContainer = match[2];
+    const alertType = match[3];
+    const lineNumber = (cleanContent.substring(0, match.index).match(/\n/g) || []).length + 1;
 
-  regexPatterns.forEach((regex, patternIndex) => {
-    let match;
-    while ((match = regex.exec(cleanContent)) !== null) {
-      const newPattern = {
-        a: match[1].trim(), // Translation key from .stream()
-        b: match[2].trim(), // Alert container from .setAlert() (3rd param)
-        c: match[3].trim(), // Alert type from .setAlert() (5th param)
-        fullMatch: match[0],
-        patternType: patternIndex + 1,
-        // Extract line number for reference
-        lineNumber: (cleanContent.substring(0, match.index).match(/\n/g) || []).length + 1
-      };
+    // Create a cleaner, more focused fullPattern
+    const streamStart = match[0].indexOf('translateService');
+    const setAlertStart = match[0].indexOf('alertService');
+    const setAlertEnd = match[0].indexOf(';', setAlertStart) + 1;
 
-      // Check for duplicates (same line number and translation key)
-      const isDuplicate = patterns.some(p =>
-        p.lineNumber === newPattern.lineNumber && p.a === newPattern.a
-      );
-
-      if (!isDuplicate) {
-        patterns.push(newPattern);
-      }
+    let cleanPattern = match[0];
+    if (setAlertEnd > setAlertStart) {
+      // Trim to just the essential parts
+      cleanPattern = match[0].substring(streamStart, setAlertEnd);
     }
-  });
+
+    // Clean up the pattern - remove excessive whitespace and newlines
+    cleanPattern = cleanPattern.replace(/\s+/g, ' ').trim();
+
+    patterns.push({
+      a: translationKey.trim(),
+      b: alertContainer.trim(),
+      c: alertType.trim(),
+      fullMatch: cleanPattern,
+      lineNumber: lineNumber
+    });
+
+    console.log(`✅ Found pattern at line ${lineNumber}: ${translationKey}`);
+  }
+
+  // Backup approach with even more focused capture
+  const backupRegex = /(?:this\.)?translateService\s*\.stream\s*\(\s*['"`]([^'"`]+)['"`][^)]*\)[\s\S]{0,200}?(?:this\.)?alertService\s*\.setAlert\s*\([^;]*?['"`]([^'"`]+)['"`][^;]*?,\s*([^,\);\s]+)[^;]*?;/g;
+  let backupMatch;
+
+  while ((backupMatch = backupRegex.exec(cleanContent)) !== null) {
+    const translationKey = backupMatch[1];
+    const alertContainer = backupMatch[2];
+    const alertType = backupMatch[3];
+    const lineNumber = (cleanContent.substring(0, backupMatch.index).match(/\n/g) || []).length + 1;
+
+    // Check if we already found this pattern
+    const alreadyFound = patterns.some(p =>
+      p.a === translationKey && Math.abs(p.lineNumber - lineNumber) <= 2
+    );
+
+    if (!alreadyFound) {
+      // Create a focused pattern for backup matches too
+      const focusedPattern = backupMatch[0]
+        .replace(/\s+/g, ' ')
+        .trim()
+        .substring(0, 150); // Limit length
+
+      patterns.push({
+        a: translationKey.trim(),
+        b: alertContainer.trim(),
+        c: alertType.trim(),
+        fullMatch: focusedPattern + (focusedPattern.length === 150 ? '...' : ''),
+        lineNumber: lineNumber,
+        foundBy: 'backup'
+      });
+
+      console.log(`✅ Backup found pattern at line ${lineNumber}: ${translationKey}`);
+    }
+  }
 
   // Sort by line number
   patterns.sort((a, b) => a.lineNumber - b.lineNumber);
+
+  console.log(`📊 Total patterns found: ${patterns.length}`);
 
   return patterns;
 }
