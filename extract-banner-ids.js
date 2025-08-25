@@ -103,8 +103,17 @@ function extractAllStreamPatterns(projectsPath) {
           patterns: patterns
         });
 
-        // Add to the array of all patterns
-        allPatterns.push(...patterns.map(p => ({ ...p, file: filePath })));
+        // Add to the array of all patterns with additional metadata
+        patterns.forEach(pattern => {
+          allPatterns.push({
+            translationKey: pattern.a,
+            alertContainer: pattern.b,
+            alertType: pattern.c,
+            filePath: filePath.replace(path.resolve(projectsPath), ''), // Relative path
+            lineNumber: pattern.lineNumber,
+            fullPattern: pattern.fullMatch.replace(/\s+/g, ' ').trim()
+          });
+        });
       }
     } catch (error) {
       console.error(`Error reading file ${filePath}:`, error.message);
@@ -123,48 +132,65 @@ function extractAllStreamPatterns(projectsPath) {
     console.log(`\n📁 ${result.file}`);
     result.patterns.forEach((pattern, index) => {
       console.log(`   Pattern ${index + 1} (Line ${pattern.lineNumber}):`);
-      console.log(`   📍 $a: ${pattern.a}`);
-      console.log(`   📍 $b: ${pattern.b}`);
-      console.log(`   📍 $c: ${pattern.c}`);
-      console.log(`   🔍 Context: ${pattern.fullMatch.substring(0, 150).replace(/\s+/g, ' ')}...`);
+      console.log(`   📍 Translation Key: ${pattern.a}`);
+      console.log(`   📍 Alert Container: ${pattern.b}`);
+      console.log(`   📍 Alert Type: ${pattern.c}`);
       console.log('   ' + '-'.repeat(50));
     });
   });
 
-  console.log('\n' + '='.repeat(70));
-  console.log('ALL EXTRACTED PATTERNS SUMMARY:');
-  console.log('='.repeat(70));
-
-  // Group by unique combinations
-  const uniquePatterns = new Map();
-  allPatterns.forEach((pattern, index) => {
-    const key = `${pattern.a}|${pattern.b}|${pattern.c}`;
-    if (!uniquePatterns.has(key)) {
-      uniquePatterns.set(key, {
-        ...pattern,
-        count: 1,
-        files: [pattern.file]
-      });
-    } else {
-      const existing = uniquePatterns.get(key);
-      existing.count++;
-      if (!existing.files.includes(pattern.file)) {
-        existing.files.push(pattern.file);
-      }
+  // Create summary object for JSON export
+  const jsonOutput = {
+    metadata: {
+      extractedAt: new Date().toISOString(),
+      searchPath: projectsPath,
+      totalFiles: tsFiles.length,
+      filesWithPatterns: fileResults.length,
+      totalPatterns: allPatterns.length,
+      uniqueTranslationKeys: [...new Set(allPatterns.map(p => p.translationKey))].length,
+      uniqueAlertContainers: [...new Set(allPatterns.map(p => p.alertContainer))].length,
+      uniqueAlertTypes: [...new Set(allPatterns.map(p => p.alertType))].length
+    },
+    patterns: allPatterns,
+    summary: {
+      translationKeys: [...new Set(allPatterns.map(p => p.translationKey))].sort(),
+      alertContainers: [...new Set(allPatterns.map(p => p.alertContainer))].sort(),
+      alertTypes: [...new Set(allPatterns.map(p => p.alertType))].sort()
     }
-  });
+  };
 
-  let patternIndex = 1;
-  uniquePatterns.forEach((pattern, key) => {
-    console.log(`\n${patternIndex.toString().padStart(3)}: `);
-    console.log(`     $a: ${pattern.a}`);
-    console.log(`     $b: ${pattern.b}`);
-    console.log(`     $c: ${pattern.c}`);
-    console.log(`     Found in: ${pattern.files.length} file(s) (${pattern.count} occurrence(s))`);
-    patternIndex++;
-  });
+  // Save to JSON file with timestamp
+  const now = new Date();
+  const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+  const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, ''); // HHMMSS
+  const outputFileName = `stream-patterns-${dateStr}-${timeStr.substring(0, 4)}.json`; // YYYY-MM-DD-HHMM
+  try {
+    fs.writeFileSync(outputFileName, JSON.stringify(jsonOutput, null, 2), 'utf8');
+    console.log(`\n✅ Results saved to: ${outputFileName}`);
+  } catch (error) {
+    console.error(`❌ Error saving JSON file: ${error.message}`);
+  }
 
-  console.log(`\n📊 Summary: Found ${allPatterns.length} total patterns (${uniquePatterns.size} unique combinations) across ${fileResults.length} files`);
+  console.log('\n' + '='.repeat(70));
+  console.log('SUMMARY:');
+  console.log('='.repeat(70));
+  console.log(`📊 Total patterns found: ${allPatterns.length}`);
+  console.log(`📁 Files with patterns: ${fileResults.length}/${tsFiles.length}`);
+  console.log(`🔑 Unique translation keys: ${jsonOutput.metadata.uniqueTranslationKeys}`);
+  console.log(`📦 Unique alert containers: ${jsonOutput.metadata.uniqueAlertContainers}`);
+  console.log(`⚠️  Unique alert types: ${jsonOutput.metadata.uniqueAlertTypes}`);
+
+  console.log('\nTop Translation Keys:');
+  const keyCount = {};
+  allPatterns.forEach(p => {
+    keyCount[p.translationKey] = (keyCount[p.translationKey] || 0) + 1;
+  });
+  Object.entries(keyCount)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 10)
+    .forEach(([key, count]) => {
+      console.log(`  ${count}x ${key}`);
+    });
 }
 
 // Get the projects path from command line argument or use default
