@@ -50,23 +50,46 @@ function extractStreamPatterns(content) {
     .replace(/\/\*[\s\S]*?\*\//g, '') // Remove block comments
     .replace(/\/\/.*$/gm, ''); // Remove line comments
 
-  // More specific regex that looks for translateService and alertService
-  // Matches: this.translateService.stream('$a', ...).subscribe(...this.alertService.setAlert(..., ..., '$b', ..., $c))
-  const streamRegex = /(?:this\.)?translateService\s*\.stream\s*\(\s*['"`]([^'"`]+)['"`][^)]*\)[\s\S]*?\.subscribe\s*\([^{]*(?:\{[\s\S]*?)?(?:this\.)?alertService\s*\.setAlert\s*\(\s*[^,]+\s*,\s*[^,]+\s*,\s*['"`]([^'"`]+)['"`]\s*,\s*[^,]+\s*,\s*([^,\);\s]+)/g;
-
   const patterns = [];
-  let match;
 
-  while ((match = streamRegex.exec(cleanContent)) !== null) {
-    patterns.push({
-      a: match[1].trim(), // Translation key from .stream()
-      b: match[2].trim(), // Alert container from .setAlert() (3rd param)
-      c: match[3].trim(), // Alert type from .setAlert() (5th param)
-      fullMatch: match[0],
-      // Extract line number for reference
-      lineNumber: (cleanContent.substring(0, match.index).match(/\n/g) || []).length + 1
-    });
-  }
+  // Split into multiple regex patterns to handle different code styles
+  const regexPatterns = [
+    // Pattern 1: Multi-line with braces
+    /(?:this\.)?translateService\s*\.stream\s*\(\s*['"`]([^'"`]+)['"`][^)]*\)[\s\S]*?\.subscribe\s*\(\s*[^{]*\{[\s\S]*?(?:this\.)?alertService\s*\.setAlert\s*\(\s*[^,]+\s*,\s*[^,]+\s*,\s*['"`]([^'"`]+)['"`]\s*,\s*[^,]+\s*,\s*([^,\);\s]+)/g,
+
+    // Pattern 2: Single line with arrow function
+    /(?:this\.)?translateService\s*\.stream\s*\(\s*['"`]([^'"`]+)['"`][^)]*\)[\s\S]*?\.subscribe\s*\(\s*[^=]*=>\s*[^{]*(?:this\.)?alertService\s*\.setAlert\s*\(\s*[^,]+\s*,\s*[^,]+\s*,\s*['"`]([^'"`]+)['"`]\s*,\s*[^,]+\s*,\s*([^,\);\s]+)/g,
+
+    // Pattern 3: Inline arrow function
+    /(?:this\.)?translateService\s*\.stream\s*\(\s*['"`]([^'"`]+)['"`][^)]*\)[\s\S]*?\.subscribe\s*\(\s*[^=]*=>\s*\{?[\s\S]*?(?:this\.)?alertService\s*\.setAlert\s*\(\s*[^,]+\s*,\s*[^,]+\s*,\s*['"`]([^'"`]+)['"`]\s*,\s*[^,]+\s*,\s*([^,\);\s]+)/g
+  ];
+
+  regexPatterns.forEach((regex, patternIndex) => {
+    let match;
+    while ((match = regex.exec(cleanContent)) !== null) {
+      const newPattern = {
+        a: match[1].trim(), // Translation key from .stream()
+        b: match[2].trim(), // Alert container from .setAlert() (3rd param)
+        c: match[3].trim(), // Alert type from .setAlert() (5th param)
+        fullMatch: match[0],
+        patternType: patternIndex + 1,
+        // Extract line number for reference
+        lineNumber: (cleanContent.substring(0, match.index).match(/\n/g) || []).length + 1
+      };
+
+      // Check for duplicates (same line number and translation key)
+      const isDuplicate = patterns.some(p =>
+        p.lineNumber === newPattern.lineNumber && p.a === newPattern.a
+      );
+
+      if (!isDuplicate) {
+        patterns.push(newPattern);
+      }
+    }
+  });
+
+  // Sort by line number
+  patterns.sort((a, b) => a.lineNumber - b.lineNumber);
 
   return patterns;
 }
