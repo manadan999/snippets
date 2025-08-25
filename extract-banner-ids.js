@@ -40,7 +40,7 @@ function findTsFiles(dir, fileList = []) {
 
 /**
  * Extracts stream/subscribe/setAlert patterns from file content
- * Pattern: .stream($a,...).subscribe(...setAlert(..., ..., $b, ..., $c))
+ * Pattern: this.translateService.stream($a,...).subscribe(...this.alertService.setAlert(..., ..., $b, ..., $c))
  * @param {string} content - File content to search
  * @returns {Array} Array of found pattern matches with $a, $b, $c
  */
@@ -50,20 +50,20 @@ function extractStreamPatterns(content) {
     .replace(/\/\*[\s\S]*?\*\//g, '') // Remove block comments
     .replace(/\/\/.*$/gm, ''); // Remove line comments
 
-  // More precise regex based on the actual code pattern
-  // Matches: .stream('$a', ...).subscribe(...setAlert(..., ..., '$b', ..., $c))
-  const streamRegex = /\.stream\s*\(\s*['"`]([^'"`]+)['"`][^)]*\)[\s\S]*?\.subscribe\s*\([^{]*\{[\s\S]*?\.setAlert\s*\(\s*[^,]+\s*,\s*[^,]+\s*,\s*['"`]([^'"`]+)['"`]\s*,\s*[^,]+\s*,\s*([^,\)]+)\s*\)/g;
+  // More specific regex that looks for translateService and alertService
+  // Matches: this.translateService.stream('$a', ...).subscribe(...this.alertService.setAlert(..., ..., '$b', ..., $c))
+  const streamRegex = /(?:this\.)?translateService\s*\.stream\s*\(\s*['"`]([^'"`]+)['"`][^)]*\)[\s\S]*?\.subscribe\s*\([^{]*(?:\{[\s\S]*?)?(?:this\.)?alertService\s*\.setAlert\s*\(\s*[^,]+\s*,\s*[^,]+\s*,\s*['"`]([^'"`]+)['"`]\s*,\s*[^,]+\s*,\s*([^,\);\s]+)/g;
 
   const patterns = [];
   let match;
 
   while ((match = streamRegex.exec(cleanContent)) !== null) {
     patterns.push({
-      a: match[1].trim(), // First parameter of .stream()
-      b: match[2].trim(), // Third parameter of .setAlert() (typically 'page-alert')
-      c: match[3].trim(), // Fifth parameter of .setAlert() (typically AlertType.ERROR)
+      a: match[1].trim(), // Translation key from .stream()
+      b: match[2].trim(), // Alert container from .setAlert() (3rd param)
+      c: match[3].trim(), // Alert type from .setAlert() (5th param)
       fullMatch: match[0],
-      // Also extract line number for reference
+      // Extract line number for reference
       lineNumber: (cleanContent.substring(0, match.index).match(/\n/g) || []).length + 1
     });
   }
