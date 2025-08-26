@@ -117,9 +117,16 @@ function extractStreamPatterns(content) {
       if (translationKey) {
         console.log('  Translation key: ' + translationKey);
 
-        // Step 3: Look for setAlert in following lines
-        for (let j = i; j < Math.min(i + 20, lines.length); j++) {
+        // Step 3: Look for setAlert in following lines (but ensure it belongs to THIS stream)
+        let foundSetAlert = false;
+        for (let j = i; j < Math.min(i + 15, lines.length) && !foundSetAlert; j++) {
           const searchLine = lines[j];
+
+          // If we encounter another .stream() call, stop looking - this setAlert belongs to a different stream
+          if (j > i && searchLine.indexOf('.stream(') !== -1) {
+            console.log('  Found another .stream() at line ' + (j + 1) + ', stopping search');
+            break;
+          }
 
           if (searchLine.indexOf('.setAlert(') !== -1) {
             console.log('  Found .setAlert on line ' + (j + 1));
@@ -168,10 +175,14 @@ function extractStreamPatterns(content) {
                   fullMatch: 'stream(' + translationKey + ') -> setAlert(..., ' + alertContainer + ', ..., ' + alertType + ')'
                 });
 
-                break; // Found the setAlert, stop looking
+                foundSetAlert = true; // Mark as found and exit loop
               }
             }
           }
+        }
+
+        if (!foundSetAlert) {
+          console.log('  No matching setAlert found for this stream');
         }
       }
     }
