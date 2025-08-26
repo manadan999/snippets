@@ -349,17 +349,56 @@ function extractAndMatchPatterns() {
     console.error(`❌ Error saving JSON file: ${error.message}`);
   }
 
-  // Generate CSV for easy Excel import
+  // Generate properly formatted CSV for easy Excel import
   const csvFileName = `complete-translation-analysis-${dateStr}-${timeStr.substring(0, 4)}.csv`;
   try {
-    let csv = 'Translation Key,English Value,Alert Container,Alert Type,File Path,Line Number,Status,Usage Count\n';
+    // Helper function to properly escape CSV values
+    function escapeCsvValue(value) {
+      if (value === null || value === undefined) {
+        return '';
+      }
 
+      const stringValue = String(value);
+
+      // Remove newlines and excessive whitespace
+      const cleanValue = stringValue
+        .replace(/\r?\n/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      // Escape quotes by doubling them and wrap in quotes
+      const escapedValue = cleanValue.replace(/"/g, '""');
+
+      // Always wrap in quotes for safety
+      return `"${escapedValue}"`;
+    }
+
+    // Create CSV header
+    let csv = 'Translation Key,English Value,Alert Container,Alert Type,File Path,Line Number,Has Translation,Usage Count,Full Pattern\n';
+
+    // Add data rows
     allPatterns.forEach(pattern => {
       const usageCount = allPatterns.filter(p => p.translationKey === pattern.translationKey).length;
-      const status = pattern.hasTranslation ? 'MATCHED' : 'MISSING';
+      const status = pattern.hasTranslation ? 'YES' : 'NO';
       const value = pattern.translationValue || 'MISSING TRANSLATION';
 
-      csv += `"${pattern.translationKey}","${value}","${pattern.alertContainer}","${pattern.alertType}","${pattern.filePath}",${pattern.lineNumber},"${status}",${usageCount}\n`;
+      // Clean up the full pattern for CSV
+      const cleanFullPattern = pattern.fullPattern
+        .replace(/\s+/g, ' ')
+        .trim()
+        .substring(0, 100) + '...'; // Limit length for readability
+
+      csv += [
+        escapeCsvValue(pattern.translationKey),
+        escapeCsvValue(value),
+        escapeCsvValue(pattern.alertContainer),
+        escapeCsvValue(pattern.alertType),
+        escapeCsvValue(pattern.filePath),
+        pattern.lineNumber,
+        escapeCsvValue(status),
+        usageCount,
+        escapeCsvValue(cleanFullPattern)
+      ].join(',') + '\n';
     });
 
     fs.writeFileSync(csvFileName, csv, 'utf8');
