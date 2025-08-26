@@ -1,450 +1,338 @@
-/**
- * Extracts stream/subscribe/setAlert patterns from file content
- * ONLY captures setAlert calls that are specifically inside the subscribe callback
- * Service names can be anything, but method names are fixed: .stream, .subscribe, .setAlert
- * stream() method can have optional second parameter: .stream('key', optionalParam)
- * @param {string} content - File content to search
- * @returns {Array} Array of found pattern matches with $a, $b, $c
- */
+#!/usr/bin/env node
+
+const fs = require('fs');
+const path = require('path');
+
+// Configuration - Update these paths
+const PROJECT_PATH = '../gca_mobile_ui/projects/mobGCA/src';
+const TRANSLATION_FILE_PATH = '../gca_mobile_ui/projects/mobGCA/src/assets/i18n/en_US.json';
+
+// Helper function to find all TypeScript files
+function findTsFiles(dir, fileList) {
+  if (!fileList) {
+    fileList = [];
+  }
+
+  try {
+    const files = fs.readdirSync(dir);
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const filePath = path.join(dir, file);
+      const stat = fs.statSync(filePath);
+
+      if (stat.isDirectory()) {
+        findTsFiles(filePath, fileList);
+      } else if (file.endsWith('.ts') || file.endsWith('.tsx')) {
+        fileList.push(filePath);
+      }
+    }
+  } catch (error) {
+    console.error('Error reading directory ' + dir + ': ' + error.message);
+  }
+
+  return fileList;
+}
+
+// Helper function to flatten nested translation JSON
+function flattenTranslationKeys(obj, prefix, result) {
+  if (!prefix) {
+    prefix = '';
+  }
+  if (!result) {
+    result = {};
+  }
+
+  for (const key in obj) {
+    if (obj.hasOwnProperty(key)) {
+      const newKey = prefix ? prefix + '.' + key : key;
+
+      if (typeof obj[key] === 'object' && obj[key] !== null && !Array.isArray(obj[key])) {
+        flattenTranslationKeys(obj[key], newKey, result);
+      } else {
+        result[newKey] = obj[key];
+      }
+    }
+  }
+  return result;
+}
+
+// Helper function to load translation file
+function loadTranslationFile(translationFilePath) {
+  try {
+    if (!fs.existsSync(translationFilePath)) {
+      console.error('Translation file not found: ' + translationFilePath);
+      return {};
+    }
+
+    console.log('Reading translation file: ' + translationFilePath);
+    const content = fs.readFileSync(translationFilePath, 'utf8');
+    const jsonData = JSON.parse(content);
+
+    const flattened = flattenTranslationKeys(jsonData);
+    console.log('Found ' + Object.keys(flattened).length + ' translation keys');
+
+    return flattened;
+  } catch (error) {
+    console.error('Error reading translation file: ' + error.message);
+    return {};
+  }
+}
+
+// Main extraction function - completely rewritten for simplicity
 function extractStreamPatterns(content) {
-  // Remove comments and clean content for better matching
-  const cleanContent = content
-    .replace(/\/\*[\s\S]*?\*\//g, '') // Remove block comments
-    .replace(/\/\/.*$/gm, ''); // Remove line comments
-
   const patterns = [];
+  const lines = content.split('\n');
 
-  // Much simpler approach: Find .stream() calls and look for .setAlert within next 300 chars
-  // But ensure there's a .subscribe between them
-  const streamRegex = /(?:this\.)?([a-zA-Z_$][\w$]*)\.stream\s*\(\s*['"`]([^'"`]+)['"`](?:[^)]+)?\s*\)/g;
-  let streamMatch;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineNumber = i + 1;
 
-  while ((streamMatch = streamRegex.exec(cleanContent)) !== null) {
-    const streamServiceName = streamMatch[1];
-    const translationKey = streamMatch[2];
-    const streamStartPos = streamMatch.index;
-    const lineNumber = (cleanContent.substring(0, streamStartPos).match(/\n/g) || []).length + 1;
+    // Step 1: Find lines with .stream
+    if (line.indexOf('.stream(') !== -1) {
+      console.log('Found .stream on line ' + lineNumber);
 
-    // Look ahead for .subscribe and .setAlert within reasonable distance
-    const lookAheadChunk = cleanContent.substring(streamStartPos, streamStartPos + 400);
+      // Step 2: Extract translation key
+      const streamIndex = line.indexOf('.stream(');
+      const afterStream = line.substring(streamIndex);
 
-    //#!/usr/bin/env node
+      // Find the quote after .stream(
+      let translationKey = null;
+      let quoteStart = afterStream.indexOf("'");
+      let quoteEnd = -1;
+      let quoteChar = "'";
 
-    const fs = require('fs');
-    const path = require('path');
-
-    // ================================
-    // CONFIGURATION - UPDATE THESE PATHS
-    // ================================
-    const PROJECT_PATH = '../gca_mobile_ui/projects/mobGCA/src';
-    const TRANSLATION_FILE_PATH = '../gca_mobile_ui/projects/mobGCA/src/assets/i18n/en_US.json';
-
-    /**
-     * Recursively finds all TypeScript files in a directory
-     * @param {string} dir - Directory to search
-     * @param {string[]} fileList - Array to store found files
-     * @returns {string[]} Array of TypeScript file paths
-     */
-    function findTsFiles(dir, fileList = []) {
-      try {
-        const files = fs.readdirSync(dir);
-
-        files.forEach(file => {
-          const filePath = path.join(dir, file);
-          const stat = fs.statSync(filePath);
-
-          if (stat.isDirectory()) {
-            // Recursively search subdirectories
-            findTsFiles(filePath, fileList);
-          } else if (file.endsWith('.ts') || file.endsWith('.tsx')) {
-            // Add TypeScript files to the list
-            fileList.push(filePath);
-          }
-        });
-      } catch (error) {
-        console.error(`Error reading directory ${dir}:`, error.message);
+      if (quoteStart === -1) {
+        quoteStart = afterStream.indexOf('"');
+        quoteChar = '"';
       }
 
-      return fileList;
-    }
-
-    /**
-     * Extracts stream/subscribe/setAlert patterns from file content
-     * Captures only the specific translateService.stream() subscription with nested setAlert
-     * @param {string} content - File content to search
-     * @returns {Array} Array of found pattern matches with $a, $b, $c
-     */
-    function extractStreamPatterns(content) {
-      // Remove comments and clean content for better matching
-      const cleanContent = content
-        .replace(/\/\*[\s\S]*?\*\//g, '') // Remove block comments
-        .replace(/\/\/.*$/gm, ''); // Remove line comments
-
-      const patterns = [];
-
-      // Find translateService.stream patterns with more precise boundaries
-      // This regex captures from .stream() to the end of the setAlert() call
-      const streamRegex = /(?:this\.)?translateService\s*\.stream\s*\(\s*['"`]([^'"`]+)['"`][^)]*\)\s*\.subscribe\s*\([^{]*(?:=>?\s*\{?|function[^{]*\{)[\s\S]*?(?:this\.)?alertService\s*\.setAlert\s*\([^;]*['"`]([^'"`]+)['"`][^;]*,\s*([^,\);\s]+)[^;]*;?\s*(?:\}|\)\s*;)/g;
-
-      let match;
-
-      while ((match = streamRegex.exec(cleanContent)) !== null) {
-        const translationKey = match[1];
-        const alertContainer = match[2];
-        const alertType = match[3];
-        const lineNumber = (cleanContent.substring(0, match.index).match(/\n/g) || []).length + 1;
-
-        // Create a cleaner, more focused fullPattern
-        const streamStart = match[0].indexOf('translateService');
-        const setAlertStart = match[0].indexOf('alertService');
-        const setAlertEnd = match[0].indexOf(';', setAlertStart) + 1;
-
-        let cleanPattern = match[0];
-        if (setAlertEnd > setAlertStart) {
-          // Trim to just the essential parts
-          cleanPattern = match[0].substring(streamStart, setAlertEnd);
-        }
-
-        // Clean up the pattern - remove excessive whitespace and newlines
-        cleanPattern = cleanPattern.replace(/\s+/g, ' ').trim();
-
-        patterns.push({
-          a: translationKey.trim(),
-          b: alertContainer.trim(),
-          c: alertType.trim(),
-          fullMatch: cleanPattern,
-          lineNumber: lineNumber
-        });
-
-        console.log(`✅ Found pattern at line ${lineNumber}: ${translationKey}`);
-      }
-
-      // Backup approach with even more focused capture
-      const backupRegex = /(?:this\.)?translateService\s*\.stream\s*\(\s*['"`]([^'"`]+)['"`][^)]*\)[\s\S]{0,200}?(?:this\.)?alertService\s*\.setAlert\s*\([^;]*?['"`]([^'"`]+)['"`][^;]*?,\s*([^,\);\s]+)[^;]*?;/g;
-      let backupMatch;
-
-      while ((backupMatch = backupRegex.exec(cleanContent)) !== null) {
-        const translationKey = backupMatch[1];
-        const alertContainer = backupMatch[2];
-        const alertType = backupMatch[3];
-        const lineNumber = (cleanContent.substring(0, backupMatch.index).match(/\n/g) || []).length + 1;
-
-        // Check if we already found this pattern
-        const alreadyFound = patterns.some(p =>
-          p.a === translationKey && Math.abs(p.lineNumber - lineNumber) <= 2
-        );
-
-        if (!alreadyFound) {
-          // Create a focused pattern for backup matches too
-          const focusedPattern = backupMatch[0]
-            .replace(/\s+/g, ' ')
-            .trim()
-            .substring(0, 150); // Limit length
-
-          patterns.push({
-            a: translationKey.trim(),
-            b: alertContainer.trim(),
-            c: alertType.trim(),
-            fullMatch: focusedPattern + (focusedPattern.length === 150 ? '...' : ''),
-            lineNumber: lineNumber,
-            foundBy: 'backup'
-          });
-
-          console.log(`✅ Backup found pattern at line ${lineNumber}: ${translationKey}`);
+      if (quoteStart !== -1) {
+        quoteEnd = afterStream.indexOf(quoteChar, quoteStart + 1);
+        if (quoteEnd !== -1) {
+          translationKey = afterStream.substring(quoteStart + 1, quoteEnd);
         }
       }
 
-      // Sort by line number
-      patterns.sort((a, b) => a.lineNumber - b.lineNumber);
+      if (translationKey) {
+        console.log('  Translation key: ' + translationKey);
 
-      console.log(`📊 Total patterns found: ${patterns.length}`);
+        // Step 3: Look for setAlert in following lines
+        for (let j = i; j < Math.min(i + 20, lines.length); j++) {
+          const searchLine = lines[j];
 
-      return patterns;
-    }
+          if (searchLine.indexOf('.setAlert(') !== -1) {
+            console.log('  Found .setAlert on line ' + (j + 1));
 
-    /**
-     * Recursively flattens nested JSON object into dot-notation keys
-     * @param {Object} obj - The JSON object to flatten
-     * @param {string} prefix - Current key prefix
-     * @param {Object} result - Accumulator for flattened keys
-     * @returns {Object} Flattened object with dot-notation keys
-     */
-    function flattenTranslationKeys(obj, prefix = '', result = {}) {
-      for (const key in obj) {
-        if (obj.hasOwnProperty(key)) {
-          const newKey = prefix ? `${prefix}.${key}` : key;
+            // Step 4: Extract setAlert parameters
+            const setAlertIndex = searchLine.indexOf('.setAlert(');
+            const afterSetAlert = searchLine.substring(setAlertIndex);
 
-          if (typeof obj[key] === 'object' && obj[key] !== null && !Array.isArray(obj[key])) {
-            // Recursively flatten nested objects
-            flattenTranslationKeys(obj[key], newKey, result);
-          } else {
-            // Add leaf values to result
-            result[newKey] = obj[key];
+            // Find all commas to identify parameters
+            const paramText = afterSetAlert.substring(afterSetAlert.indexOf('(') + 1);
+            const parts = paramText.split(',');
+
+            if (parts.length >= 5) {
+              // Extract 3rd parameter (alert container)
+              let alertContainer = null;
+              if (parts[2]) {
+                const param3 = parts[2].trim();
+                const quote3Start = Math.max(param3.indexOf("'"), param3.indexOf('"'));
+                if (quote3Start !== -1) {
+                  const quote3Char = param3.charAt(quote3Start);
+                  const quote3End = param3.indexOf(quote3Char, quote3Start + 1);
+                  if (quote3End !== -1) {
+                    alertContainer = param3.substring(quote3Start + 1, quote3End);
+                  }
+                }
+              }
+
+              // Extract 5th parameter (alert type)
+              let alertType = null;
+              if (parts[4]) {
+                alertType = parts[4].trim();
+                // Remove closing parenthesis and semicolon
+                alertType = alertType.replace(/[);]/g, '');
+                alertType = alertType.trim();
+              }
+
+              if (alertContainer && alertType) {
+                console.log('  Alert container: ' + alertContainer);
+                console.log('  Alert type: ' + alertType);
+
+                patterns.push({
+                  a: translationKey,
+                  b: alertContainer,
+                  c: alertType,
+                  lineNumber: lineNumber,
+                  fullMatch: 'stream(' + translationKey + ') -> setAlert(..., ' + alertContainer + ', ..., ' + alertType + ')'
+                });
+
+                break; // Found the setAlert, stop looking
+              }
+            }
           }
         }
       }
-      return result;
     }
+  }
 
-    /**
-     * Reads and processes the translation JSON file
-     * @param {string} translationFilePath - Path to the translation JSON file
-     * @returns {Object} Flattened translation keys
-     */
-    function loadTranslationFile(translationFilePath) {
-      try {
-        if (!fs.existsSync(translationFilePath)) {
-          console.error(`❌ Translation file not found: ${translationFilePath}`);
-          return {};
-        }
+  return patterns;
+}
 
-        console.log(`📖 Reading translation file: ${translationFilePath}`);
-        const content = fs.readFileSync(translationFilePath, 'utf8');
-        const jsonData = JSON.parse(content);
+// Helper function to escape CSV values
+function escapeCsvValue(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
 
-        // Flatten the nested structure
-        const flattened = flattenTranslationKeys(jsonData);
-        console.log(`✅ Found ${Object.keys(flattened).length} translation keys`);
+  const stringValue = String(value);
+  const cleanValue = stringValue.replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim();
+  const escapedValue = cleanValue.replace(/"/g, '""');
 
-        return flattened;
-      } catch (error) {
-        console.error(`❌ Error reading translation file: ${error.message}`);
-        return {};
-      }
-    }
+  return '"' + escapedValue + '"';
+}
 
-    /**
-     * Main function to extract patterns and match with translations
-     */
-    function extractAndMatchPatterns() {
-      console.log('🔍 Complete Translation Pattern Extractor & Matcher');
-      console.log('='.repeat(70));
-      console.log(`📁 Project Path: ${PROJECT_PATH}`);
-      console.log(`📖 Translation File: ${TRANSLATION_FILE_PATH}`);
-      console.log('='.repeat(70));
+// Main function
+function extractAndMatchPatterns() {
+  console.log('Starting extraction...');
+  console.log('Project path: ' + PROJECT_PATH);
+  console.log('Translation file: ' + TRANSLATION_FILE_PATH);
 
-      // Check if the projects directory exists
-      if (!fs.existsSync(PROJECT_PATH)) {
-        console.error(`❌ Project directory does not exist: ${PROJECT_PATH}`);
-        process.exit(1);
-      }
+  // Check if project directory exists
+  if (!fs.existsSync(PROJECT_PATH)) {
+    console.error('Project directory does not exist: ' + PROJECT_PATH);
+    process.exit(1);
+  }
 
-      // Load translation keys
-      const translations = loadTranslationFile(TRANSLATION_FILE_PATH);
+  // Load translations
+  const translations = loadTranslationFile(TRANSLATION_FILE_PATH);
 
-      // Find all TypeScript files
-      const tsFiles = findTsFiles(PROJECT_PATH);
-      console.log(`📄 Found ${tsFiles.length} TypeScript files\n`);
+  // Find TypeScript files
+  const tsFiles = findTsFiles(PROJECT_PATH);
+  console.log('Found ' + tsFiles.length + ' TypeScript files');
 
-      if (tsFiles.length === 0) {
-        console.log('❌ No TypeScript files found in the specified directory.');
-        return;
-      }
+  if (tsFiles.length === 0) {
+    console.log('No TypeScript files found.');
+    return;
+  }
 
-      const allPatterns = [];
-      const fileResults = [];
+  const allPatterns = [];
 
-      // Process each file
-      tsFiles.forEach(filePath => {
-        try {
-          const content = fs.readFileSync(filePath, 'utf8');
-          const patterns = extractStreamPatterns(content);
+  // Process each file
+  for (let i = 0; i < tsFiles.length; i++) {
+    const filePath = tsFiles[i];
 
-          if (patterns.length > 0) {
-            fileResults.push({
-              file: filePath,
-              patterns: patterns
-            });
+    try {
+      const content = fs.readFileSync(filePath, 'utf8');
+      const patterns = extractStreamPatterns(content);
 
-            // Add to the array of all patterns with additional metadata
-            patterns.forEach(pattern => {
-              const translationValue = translations[pattern.a] || null;
+      for (let j = 0; j < patterns.length; j++) {
+        const pattern = patterns[j];
+        const translationValue = translations[pattern.a] || null;
 
-              allPatterns.push({
-                translationKey: pattern.a,
-                translationValue: translationValue,
-                alertContainer: pattern.b,
-                alertType: pattern.c,
-                filePath: filePath.replace(path.resolve(PROJECT_PATH), ''), // Relative path
-                lineNumber: pattern.lineNumber,
-                fullPattern: pattern.fullMatch.replace(/\s+/g, ' ').trim(),
-                hasTranslation: translationValue !== null
-              });
-            });
-          }
-        } catch (error) {
-          console.error(`❌ Error reading file ${filePath}:`, error.message);
-        }
-      });
-
-      // Display results
-      if (fileResults.length === 0) {
-        console.log('❌ No stream/subscribe/setAlert patterns found in any TypeScript files.');
-        return;
-      }
-
-      // Create comprehensive analysis
-      const uniqueKeys = [...new Set(allPatterns.map(p => p.translationKey))];
-      const matchedKeys = uniqueKeys.filter(key => translations[key] !== undefined);
-      const missingKeys = uniqueKeys.filter(key => translations[key] === undefined);
-
-      // Console output
-      console.log('📊 EXTRACTION RESULTS:');
-      console.log('-'.repeat(70));
-      console.log(`🔤 Total patterns found: ${allPatterns.length}`);
-      console.log(`🔑 Unique translation keys: ${uniqueKeys.length}`);
-      console.log(`✅ Keys with translations: ${matchedKeys.length}`);
-      console.log(`❌ Missing translations: ${missingKeys.length}`);
-      console.log(`📁 Files with patterns: ${fileResults.length}/${tsFiles.length}`);
-
-      if (missingKeys.length > 0) {
-        console.log('\n❌ MISSING TRANSLATIONS:');
-        console.log('-'.repeat(40));
-        missingKeys.forEach(key => {
-          const count = allPatterns.filter(p => p.translationKey === key).length;
-          console.log(`🔑 ${key} (used ${count}x)`);
+        allPatterns.push({
+          translationKey: pattern.a,
+          translationValue: translationValue,
+          alertContainer: pattern.b,
+          alertType: pattern.c,
+          filePath: filePath.replace(path.resolve(PROJECT_PATH), ''),
+          lineNumber: pattern.lineNumber,
+          fullPattern: pattern.fullMatch,
+          hasTranslation: translationValue !== null
         });
       }
+    } catch (error) {
+      console.error('Error reading file ' + filePath + ': ' + error.message);
+    }
+  }
 
-      console.log('\n✅ TOP MATCHED TRANSLATIONS:');
-      console.log('-'.repeat(40));
-      const keyUsage = {};
-      allPatterns.forEach(p => {
-        if (p.hasTranslation) {
-          keyUsage[p.translationKey] = (keyUsage[p.translationKey] || 0) + 1;
-        }
-      });
+  // Display results
+  console.log('\nResults:');
+  console.log('Total patterns found: ' + allPatterns.length);
 
-      Object.entries(keyUsage)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 10)
-        .forEach(([key, count]) => {
-          console.log(`${count}x ${key}: "${translations[key]}"`);
-        });
+  const uniqueKeys = [];
+  const keySet = {};
 
-      // Create comprehensive output object
-      const output = {
-        metadata: {
-          extractedAt: new Date().toISOString(),
-          projectPath: PROJECT_PATH,
-          translationFile: TRANSLATION_FILE_PATH,
-          totalFiles: tsFiles.length,
-          filesWithPatterns: fileResults.length,
-          totalPatterns: allPatterns.length,
-          uniqueTranslationKeys: uniqueKeys.length,
-          matchedTranslations: matchedKeys.length,
-          missingTranslations: missingKeys.length,
-          uniqueAlertContainers: [...new Set(allPatterns.map(p => p.alertContainer))].length,
-          uniqueAlertTypes: [...new Set(allPatterns.map(p => p.alertType))].length
-        },
-        patterns: allPatterns,
-        summary: {
-          matchedKeys: matchedKeys.map(key => ({
-            key: key,
-            value: translations[key],
-            usageCount: allPatterns.filter(p => p.translationKey === key).length
-          })),
-          missingKeys: missingKeys.map(key => ({
-            key: key,
-            usageCount: allPatterns.filter(p => p.translationKey === key).length,
-            usedInFiles: [...new Set(allPatterns.filter(p => p.translationKey === key).map(p => p.filePath))]
-          })),
-          alertContainers: [...new Set(allPatterns.map(p => p.alertContainer))].sort(),
-          alertTypes: [...new Set(allPatterns.map(p => p.alertType))].sort()
-        },
-        fileResults: fileResults.map(result => ({
-          file: result.file,
-          patternCount: result.patterns.length,
-          patterns: result.patterns.map(p => ({
-            line: p.lineNumber,
-            translationKey: p.a,
-            translationValue: translations[p.a] || 'MISSING',
-            alertContainer: p.b,
-            alertType: p.c,
-            hasTranslation: translations[p.a] !== undefined
-          }))
-        }))
-      };
+  for (let i = 0; i < allPatterns.length; i++) {
+    const key = allPatterns[i].translationKey;
+    if (!keySet[key]) {
+      keySet[key] = true;
+      uniqueKeys.push(key);
+    }
+  }
 
-      // Save to JSON file with timestamp
-      const now = new Date();
-      const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
-      const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, ''); // HHMMSS
-      const outputFileName = `complete-translation-analysis-${dateStr}-${timeStr.substring(0, 4)}.json`; // YYYY-MM-DD-HHMM
+  let matchedKeys = 0;
+  let missingKeys = 0;
 
-      try {
-        fs.writeFileSync(outputFileName, JSON.stringify(output, null, 2), 'utf8');
-        console.log(`\n✅ Complete analysis saved to: ${outputFileName}`);
-      } catch (error) {
-        console.error(`❌ Error saving JSON file: ${error.message}`);
-      }
+  for (let i = 0; i < uniqueKeys.length; i++) {
+    if (translations[uniqueKeys[i]]) {
+      matchedKeys++;
+    } else {
+      missingKeys++;
+    }
+  }
 
-      // Generate properly formatted CSV for easy Excel import
-      const csvFileName = `complete-translation-analysis-${dateStr}-${timeStr.substring(0, 4)}.csv`;
-      try {
-        // Helper function to properly escape CSV values
-        function escapeCsvValue(value) {
-          if (value === null || value === undefined) {
-            return '';
-          }
+  console.log('Unique translation keys: ' + uniqueKeys.length);
+  console.log('Keys with translations: ' + matchedKeys);
+  console.log('Missing translations: ' + missingKeys);
 
-          const stringValue = String(value);
+  // Create output object
+  const output = {
+    metadata: {
+      extractedAt: new Date().toISOString(),
+      projectPath: PROJECT_PATH,
+      translationFile: TRANSLATION_FILE_PATH,
+      totalPatterns: allPatterns.length,
+      uniqueTranslationKeys: uniqueKeys.length,
+      matchedTranslations: matchedKeys,
+      missingTranslations: missingKeys
+    },
+    patterns: allPatterns
+  };
 
-          // Remove newlines and excessive whitespace
-          const cleanValue = stringValue
-            .replace(/\r?\n/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
+  // Save JSON file
+  const now = new Date();
+  const dateStr = now.toISOString().split('T')[0];
+  const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '');
+  const outputFileName = 'translation-analysis-' + dateStr + '-' + timeStr.substring(0, 4) + '.json';
 
-          // Escape quotes by doubling them and wrap in quotes
-          const escapedValue = cleanValue.replace(/"/g, '""');
+  try {
+    fs.writeFileSync(outputFileName, JSON.stringify(output, null, 2), 'utf8');
+    console.log('JSON saved to: ' + outputFileName);
+  } catch (error) {
+    console.error('Error saving JSON: ' + error.message);
+  }
 
-          // Always wrap in quotes for safety
-          return `"${escapedValue}"`;
-        }
+  // Save CSV file
+  const csvFileName = 'translation-analysis-' + dateStr + '-' + timeStr.substring(0, 4) + '.csv';
 
-        // Create CSV header
-        let csv = 'Translation Key,English Value,Alert Container,Alert Type,File Path,Line Number,Has Translation,Usage Count,Full Pattern\n';
+  try {
+    let csv = 'Translation Key,English Value,Alert Container,Alert Type,File Path,Line Number,Has Translation,Full Pattern\n';
 
-        // Add data rows
-        allPatterns.forEach(pattern => {
-          const usageCount = allPatterns.filter(p => p.translationKey === pattern.translationKey).length;
-          const status = pattern.hasTranslation ? 'YES' : 'NO';
-          const value = pattern.translationValue || 'MISSING TRANSLATION';
+    for (let i = 0; i < allPatterns.length; i++) {
+      const pattern = allPatterns[i];
+      const value = pattern.translationValue || 'MISSING TRANSLATION';
+      const hasTranslation = pattern.hasTranslation ? 'YES' : 'NO';
 
-          // Clean up the full pattern for CSV
-          const cleanFullPattern = pattern.fullPattern
-            .replace(/\s+/g, ' ')
-            .trim()
-            .substring(0, 100) + '...'; // Limit length for readability
-
-          csv += [
-            escapeCsvValue(pattern.translationKey),
-            escapeCsvValue(value),
-            escapeCsvValue(pattern.alertContainer),
-            escapeCsvValue(pattern.alertType),
-            escapeCsvValue(pattern.filePath),
-            pattern.lineNumber,
-            escapeCsvValue(status),
-            usageCount,
-            escapeCsvValue(cleanFullPattern)
-          ].join(',') + '\n';
-        });
-
-        fs.writeFileSync(csvFileName, csv, 'utf8');
-        console.log(`✅ CSV report saved to: ${csvFileName}`);
-      } catch (error) {
-        console.error(`❌ Error saving CSV: ${error.message}`);
-      }
-
-      console.log(`\n🎉 Analysis complete! Check the generated files for detailed results.`);
+      csv += escapeCsvValue(pattern.translationKey) + ',';
+      csv += escapeCsvValue(value) + ',';
+      csv += escapeCsvValue(pattern.alertContainer) + ',';
+      csv += escapeCsvValue(pattern.alertType) + ',';
+      csv += escapeCsvValue(pattern.filePath) + ',';
+      csv += pattern.lineNumber + ',';
+      csv += escapeCsvValue(hasTranslation) + ',';
+      csv += escapeCsvValue(pattern.fullPattern) + '\n';
     }
 
-    // Display configuration and run
-    console.log('\n📋 CONFIGURATION:');
-    console.log(`Project Path: ${PROJECT_PATH}`);
-    console.log(`Translation File: ${TRANSLATION_FILE_PATH}`);
-    console.log('\nTo change these paths, edit the constants at the top of this script.\n');
+    fs.writeFileSync(csvFileName, csv, 'utf8');
+    console.log('CSV saved to: ' + csvFileName);
+  } catch (error) {
+    console.error('Error saving CSV: ' + error.message);
+  }
 
-    // Run the complete analysis
-    extractAndMatchPatterns();
+  console.log('Analysis complete!');
+}
+
+// Run the analysis
+extractAndMatchPatterns();
